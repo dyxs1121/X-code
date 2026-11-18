@@ -1,0 +1,53 @@
+workflows:
+  ios-trollstore-unsigned:
+    name: X-Card iOS 无签名 IPA (TrollStore)
+    max_build_duration: 60
+    instance_type: mac_mini_m1
+    environment:
+      flutter: stable
+      xcode: latest
+      cocoapods: default
+    cache:
+      cache_paths:
+        - $HOME/.pub-cache
+        - $HOME/Library/Caches/CocoaPods
+    scripts:
+      - name: 1/4 获取 Flutter 依赖
+        script: flutter pub get
+
+      - name: 2/4 生成 iOS 工程（若仓库中不存在）
+        script: |
+          set -e
+          if [ ! -d "ios" ]; then
+            echo "未检测到 ios/ 目录，正在生成..."
+            cp pubspec.yaml /tmp/xcard_pubspec.yaml
+            cp -R lib /tmp/xcard_lib
+            if [ -d assets ]; then cp -R assets /tmp/xcard_assets; fi
+            flutter create --platforms ios --project-name x_card --org com.xcard .
+            cp /tmp/xcard_pubspec.yaml pubspec.yaml
+            rm -rf lib && cp -R /tmp/xcard_lib lib
+            if [ -d /tmp/xcard_assets ]; then rm -rf assets && cp -R /tmp/xcard_assets assets; fi
+          else
+            echo "检测到 ios/ 目录，跳过生成。"
+          fi
+          /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string X-Card" ios/Runner/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName X-Card" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :CFBundleName string X-Card" ios/Runner/Info.plist 2>/dev/null || /usr/libexec/PlistBuddy -c "Set :CFBundleName X-Card" ios/Runner/Info.plist
+          /usr/libexec/PlistBuddy -c "Add :NSPhotoLibraryUsageDescription string 用于从相册选择并上传你的银行卡卡面照片" ios/Runner/Info.plist 2>/dev/null || true
+          echo "Bundle ID: com.xcard.x_card"
+
+      - name: 3/4 构建无签名 iOS App
+        script: flutter build ios --release --no-codesign
+
+      - name: 4/4 打包为 IPA
+        script: |
+          set -e
+          rm -rf Payload output
+          mkdir -p Payload output
+          cp -R build/ios/iphoneos/Runner.app Payload/X-Card.app
+          zip -qr X-Card.ipa Payload
+          cp X-Card.ipa output/X-Card.ipa
+          ls -lh output/X-Card.ipa
+
+    artifacts:
+      - output/*.ipa
+      - build/ios/iphoneos/*.app
