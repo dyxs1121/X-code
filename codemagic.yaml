@@ -1,4 +1,3 @@
-
 workflows:
   ios-trollstore-unsigned:
     name: X-Card iOS 无签名 IPA (TrollStore)
@@ -42,25 +41,45 @@ workflows:
           from pathlib import Path
           import re
 
-          # 1) Podfile：追加 post_install，关闭所有 Pods target 签名（含资源 bundle）
+          # 1) Podfile：必须注入到已有的 post_install 内部（CocoaPods 不允许多个 hook）
           pod = Path('ios/Podfile')
           s = pod.read_text()
           if 'XCARD_NO_SIGN' not in s:
-              s += '''
-
-          # XCARD_NO_SIGN - fakesign will be handled by TrollStore
-          post_install do |installer|
-            installer.pods_project.targets.each do |target|
-              target.build_configurations.each do |config|
-                config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'
-                config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'
-                config.build_settings['CODE_SIGNING_IDENTITY'] = '-'
-                config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = '-'
-                config.build_settings['DEVELOPMENT_TEAM'] = ''
-              end
-            end
-          end
-          '''
+              marker = 'flutter_additional_ios_build_settings(target)'
+              if marker in s:
+                  src_line = next(l for l in s.split('\n') if marker in l)
+                  indent = src_line[:len(src_line) - len(src_line.lstrip())]
+                  inner = indent + '  '
+                  addition = (
+                      marker + '\n'
+                      + inner + '# XCARD_NO_SIGN - fakesign handled by TrollStore\n'
+                      + inner + 'target.build_configurations.each do |config|\n'
+                      + inner + "  config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'\n"
+                      + inner + "  config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'\n"
+                      + inner + "  config.build_settings['CODE_SIGNING_IDENTITY'] = '-'\n"
+                      + inner + "  config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = '-'\n"
+                      + inner + "  config.build_settings['DEVELOPMENT_TEAM'] = ''\n"
+                      + inner + 'end\n'
+                  )
+                  s = s.replace(marker, addition, 1)
+              else:
+                  lines = s.split('\n')
+                  idx = next(i for i, l in enumerate(lines) if 'post_install do |installer|' in l)
+                  indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())] + '  '
+                  inject = [
+                      indent + '# XCARD_NO_SIGN - fakesign handled by TrollStore',
+                      indent + 'installer.pods_project.targets.each do |target|',
+                      indent + '  target.build_configurations.each do |config|',
+                      indent + "    config.build_settings['CODE_SIGNING_ALLOWED'] = 'NO'",
+                      indent + "    config.build_settings['CODE_SIGNING_REQUIRED'] = 'NO'",
+                      indent + "    config.build_settings['CODE_SIGNING_IDENTITY'] = '-'",
+                      indent + "    config.build_settings['EXPANDED_CODE_SIGN_IDENTITY'] = '-'",
+                      indent + "    config.build_settings['DEVELOPMENT_TEAM'] = ''",
+                      indent + '  end',
+                      indent + 'end',
+                  ]
+                  lines[idx + 1:idx + 1] = inject
+                  s = '\n'.join(lines)
               pod.write_text(s)
 
           # 2) project.pbxproj：所有 buildSettings 块强制无签名
@@ -152,3 +171,4 @@ workflows:
     artifacts:
       - output/*.ipa
       - build/ios/iphoneos/*.app
+
